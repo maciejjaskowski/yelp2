@@ -118,7 +118,7 @@ def prep_y(train):
 FC7_COLS = ['fc7_' + str(i) for i in range(4096)]
 
 
-processed = 0
+processed = config['from']
 
 def to_df(photo_to_biz, train_y, paths):
     global processed
