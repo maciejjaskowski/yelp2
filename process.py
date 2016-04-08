@@ -5,18 +5,25 @@ from scipy import misc
 import pandas as pd
 import os
 import numpy as np
-from multiprocessing import Pool, TimeoutError
+import sys
+import getopt
 
 default_vgg16_path = '/Users/maciej/Projects/datascience/Lasagne-Recipes/modelzoo/vgg16.pkl'
 
+optlist, args = getopt.getopt(sys.argv[1:], '', [
+    'vgg16_path=',
+])
 
-vgg16_weights = np.load(default_vgg16_path)
+d = {'vgg16_path': default_vgg16_path}
+for o, a in optlist:
+    if o in ("--vgg16_path",):
+        d['vgg16_path'] = a
 
 network = vgg16.build_model()
 fc7 = network['fc7']
 output_layer = network['fc8']
 
-vgg16_weights = pickle.load(open(default_vgg16_path))
+vgg16_weights = pickle.load(open(d['vgg16_path']))
 param_values = vgg16_weights['param values']
 MEAN_IMAGE = vgg16_weights['mean value']
 CLASSES = vgg16_weights['synset words']
