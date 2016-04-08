@@ -19,17 +19,20 @@ output_path = '../yelp-data/train-photos2.h5'
 
 optlist, args = getopt.getopt(sys.argv[1:], '', [
     'vgg16_path=',
-    'fraction=',
+    'head=',
 ])
 
 d = {'vgg16_path': default_vgg16_path,
-     'fraction': 0.00001}
+     'head': None,
+     'batch_size': 32}
 
 for o, a in optlist:
     if o in ("--vgg16_path",):
         d['vgg16_path'] = a
     if o in ("--fraction",):
-        d['fraction'] = a
+        d['head'] = int(a)
+    if o in ("--batch_size",):
+        d['batch_size'] = int(a)
 
 network = vgg16.build_model()
 fc7 = network['fc7']
@@ -123,7 +126,7 @@ def to_df(photo_to_biz, train_y, paths):
     rows.index = photo_ids
     processed += len(paths)
     print(processed)
-    
+
     return rows
 
 
@@ -153,7 +156,12 @@ print("Starting conversion.")
 import time
 start = time.time()
 #list_result = pool.imap_unordered(pool_to_df, photos_paths[:50])
-list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+32]) for i in range(0, int(len(photos_paths) * d['fraction']), 32)]
+
+if d['head'] is None:
+    r = range(0, len(photos_paths), d['batch_size'])
+else:
+    r = range(0, d['head'], d['batch_size'])
+list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+d['batch_size']]) for i in r]
 end = time.time()
 print(end - start)
 
