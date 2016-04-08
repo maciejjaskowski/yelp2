@@ -8,16 +8,28 @@ import numpy as np
 import sys
 import getopt
 
+import io
+import skimage.transform
+
+from lasagne.utils import floatX
+
 default_vgg16_path = '/Users/maciej/Projects/datascience/Lasagne-Recipes/modelzoo/vgg16.pkl'
+photos_dir_path = '../yelp-data/train_photos/'
+output_path = '../yelp-data/train-photos2.h5'
 
 optlist, args = getopt.getopt(sys.argv[1:], '', [
     'vgg16_path=',
+    'fraction=',
 ])
 
-d = {'vgg16_path': default_vgg16_path}
+d = {'vgg16_path': default_vgg16_path,
+     'fraction': 0.00001}
+
 for o, a in optlist:
     if o in ("--vgg16_path",):
         d['vgg16_path'] = a
+    if o in ("--fraction",):
+        d['fraction'] = a
 
 network = vgg16.build_model()
 fc7 = network['fc7']
@@ -37,13 +49,6 @@ lasagne.layers.set_all_param_values(output_layer, param_values)
 # np.random.shuffle(image_urls)
 # image_urls = image_urls[:2]
 
-
-
-import io
-import skimage.transform
-
-import matplotlib.pyplot as plt
-from lasagne.utils import floatX
 
 def resize_and_crop(im):
     # Resize so smallest dim = 256, preserving aspect ratio
@@ -71,9 +76,9 @@ def prep_for_network(im):
     return rawim, floatX(im[np.newaxis])
 
 
-def fetch_img(url):
-    ext = url.split('.')[-1]
-    return plt.imread(io.BytesIO(urllib.urlopen(url).read()), ext)
+#def fetch_img(url):
+#    ext = url.split('.')[-1]
+#    return plt.imread(io.BytesIO(urllib.urlopen(url).read()), ext)
 
 
 def prep_y(train):
@@ -93,25 +98,34 @@ def prep_y(train):
 FC7_COLS = ['fc7_' + str(i) for i in range(4096)]
 
 
-def to_df(photo_to_biz, train_y, path):
+processed = 0
+
+def to_df(photo_to_biz, train_y, paths):
+    global processed
     try:
-        photo_id = int(path.split('/')[-1][:-4])
-        business_id = photo_to_biz.loc[photo_id, 'business_id']
-        rawim, im = prep_for_network(resize_and_crop(misc.imread(path)))
-
-        fc7_out = np.array(lasagne.layers.get_output(fc7, im, deterministic=True).eval())
-        try:
-            labels = train_y.loc[[business_id], :].reset_index()
-            row = pd.concat([labels,
-                        pd.DataFrame(fc7_out, columns=FC7_COLS)], axis=1)
-            row.index = [photo_id]
-            return row
-        except KeyError as e:
-            print(e)
-            return None
-
+        imgs = []
+        for path in paths:
+            photo_id = int(path.split('/')[-1][:-4])
+            business_id = photo_to_biz.loc[photo_id, 'business_id']
+            rawim, im = prep_for_network(resize_and_crop(misc.imread(path)))
+            if business_id not in [430, 1627, 2661, 2941]:
+                imgs.append((photo_id, business_id, rawim, im))
     except IOError:
         print('bad path: ' + path)
+
+    imgs_only = np.concatenate([i[-1] for i in imgs], axis=0)
+    fc7_outs = list(np.array(lasagne.layers.get_output(fc7, imgs_only, deterministic=True).eval()))
+
+    photo_ids, business_ids = zip(*[[photo_id, business_id] for (photo_id, business_id, _, _) in imgs])
+    rows = pd.concat([pd.DataFrame(np.transpose([photo_ids, business_ids]), columns=['photo_id', 'business_id']),
+                      train_y.loc[business_ids, :].reset_index(drop=True),
+                      pd.DataFrame(fc7_outs, columns=FC7_COLS)], axis=1)
+    rows.index = photo_ids
+    processed += len(paths)
+    print(processed)
+    
+    return rows
+
 
 print("Reading photo_to_biz.")
 photo_to_biz = pd.read_csv('../yelp-data/train_photo_to_biz_ids.csv', header=0, index_col='photo_id')
@@ -121,13 +135,11 @@ train_y.columns = ['good_for_lunch', 'good_for_dinner', 'takes_reservations', 'o
                    'restaurant_is_expensive', 'has_alcohol', 'has_table_service', 'ambience_is_classy', 'good_for_kids']
 
 
-photos_dir_path = '../yelp-data/train_photos/'
-
 print("Reading photos_paths.")
-photos_paths = [photos_dir_path + filename for filename in os.listdir(photos_dir_path)]
+photos_paths = sorted([photos_dir_path + filename for filename in os.listdir(photos_dir_path)])
 
 # pool_size = 3
-output_path = '../yelp-data/train-photos2.h5'
+
 # print("Starting Pool of {pool_size} workers.".format(pool_size=pool_size))
 
 
@@ -141,7 +153,7 @@ print("Starting conversion.")
 import time
 start = time.time()
 #list_result = pool.imap_unordered(pool_to_df, photos_paths[:50])
-list_result = [to_df(photo_to_biz, train_y, path) for path in photos_paths[:100]]
+list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+32]) for i in range(0, int(len(photos_paths) * d['fraction']), 32)]
 end = time.time()
 print(end - start)
 
