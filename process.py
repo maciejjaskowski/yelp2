@@ -7,6 +7,7 @@ import os
 import numpy as np
 import sys
 import getopt
+import json
 
 import io
 import skimage.transform
@@ -15,30 +16,46 @@ from lasagne.utils import floatX
 
 default_vgg16_path = '/Users/maciej/Projects/datascience/Lasagne-Recipes/modelzoo/vgg16.pkl'
 photos_dir_path = '../yelp-data/train_photos/'
-output_path = '../yelp-data/train-photos2.h5'
+output_dir = '../yelp-data/train_out/'
+config_path = output_dir + 'config'
+output_path = output_dir + '{i}.h5'
 
 optlist, args = getopt.getopt(sys.argv[1:], '', [
     'vgg16_path=',
-    'head=',
+    'from=',
+    'to=',
+    'batch_size=',
 ])
 
-d = {'vgg16_path': default_vgg16_path,
-     'head': None,
-     'batch_size': 32}
+cmd_config = {'vgg16_path': default_vgg16_path,
+             'from': 0,
+             'to': None,
+             'batch_size': 32}
 
 for o, a in optlist:
     if o in ("--vgg16_path",):
-        d['vgg16_path'] = a
-    if o in ("--fraction",):
-        d['head'] = int(a)
+        cmd_config['vgg16_path'] = a
+    if o in ("--from",):
+        cmd_config['from'] = int(a)
+    if o in ("--to",):
+        cmd_config['to'] = int(a)
     if o in ("--batch_size",):
-        d['batch_size'] = int(a)
+        cmd_config['batch_size'] = int(a)
+
+
+with open(config_path) as cfg_file:
+    file_config = json.load(cfg_file)
+
+cmd_config.update(file_config)
+config = cmd_config
+
+print("Final config: ", config)
 
 network = vgg16.build_model()
 fc7 = network['fc7']
 output_layer = network['fc8']
 
-vgg16_weights = pickle.load(open(d['vgg16_path']))
+vgg16_weights = pickle.load(open(config['vgg16_path']))
 param_values = vgg16_weights['param values']
 MEAN_IMAGE = vgg16_weights['mean value']
 CLASSES = vgg16_weights['synset words']
@@ -153,23 +170,42 @@ photos_paths = sorted([photos_dir_path + filename for filename in os.listdir(pho
 #pool = Pool(processes=pool_size)
 
 print("Starting conversion.")
-import time
-start = time.time()
+
 #list_result = pool.imap_unordered(pool_to_df, photos_paths[:50])
 
-if d['head'] is None:
-    r = range(0, len(photos_paths), d['batch_size'])
+med_batch_size = config['med_batch_size']
+
+if config['to'] is None:
+    last_photo = len(photos_paths)
 else:
-    r = range(0, d['head'], d['batch_size'])
-list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+d['batch_size']]) for i in r]
-end = time.time()
-print(end - start)
+    last_photo = config['to']
 
-print("Starting concatenation.")
-result = pd.concat(list_result)
+for start_med in range(config['from'], last_photo, med_batch_size):
+    config['from'] = start_med
+    with open(config_path, 'w') as cfg_file:
+        json.dump(config, cfg_file)
 
-print("Starting saving to {output_path}".format(output_path=output_path))
-result.to_hdf(output_path, 'fc7')
+    import time
+    start = time.time()
+    list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+config['batch_size']])
+                   for i in range(start_med, start_med + med_batch_size, config['batch_size'])]
+    end = time.time()
+    print(end - start)
+    print("Starting concatenation.")
+    result = pd.concat(list_result)
+    out = output_path.format(i=start_med)
+
+
+    print("Starting saving to {output_path}".format(output_path=out))
+    result.to_hdf(out, 'fc7')
+
+
+
+
+
+
+
+
 
 
 
