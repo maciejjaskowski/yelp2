@@ -15,10 +15,27 @@ import skimage.transform
 from lasagne.utils import floatX
 
 default_vgg16_path = '/Users/maciej/Projects/datascience/Lasagne-Recipes/modelzoo/vgg16.pkl'
-photos_dir_path = '../yelp-data/train_photos/'
-output_dir = '../yelp-data/train_out/'
-config_path = output_dir + 'config'
-output_path = output_dir + '{i}.h5'
+
+directory = sys.argv[1]
+
+if directory == 'train_out':
+    photos_dir_path = '../yelp-data/train_photos/'
+    output_dir = '../yelp-data/train_out/'
+    config_path = output_dir + 'config'
+    output_path = output_dir + '{i}.h5'
+    photo_to_biz_path = '../yelp-data/train_photo_to_biz_ids.csv'
+    train_csv_path = '../yelp-data/train.csv'
+
+elif directory == 'test_out':
+    photos_dir_path = '../yelp-data/test_photos/'
+    output_dir = '../yelp-data/test_out/'
+    config_path = output_dir + 'config'
+    output_path = output_dir + '{i}.h5'
+    photo_to_biz_path = '../yelp-data/test_photo_to_biz.csv'
+    train_csv_path = None
+
+else:
+    raise RuntimeError("Nieznany parametr: " + str(directory))
 
 optlist, args = getopt.getopt(sys.argv[1:], '', [
     'vgg16_path=',
@@ -30,7 +47,8 @@ optlist, args = getopt.getopt(sys.argv[1:], '', [
 cmd_config = {'vgg16_path': default_vgg16_path,
              'from': 0,
              'to': None,
-             'batch_size': 32}
+             'batch_size': 4,
+             'med_batch_size': 16}
 
 for o, a in optlist:
     if o in ("--vgg16_path",):
@@ -122,38 +140,56 @@ processed = config['from']
 
 def to_df(photo_to_biz, train_y, paths):
     global processed
-    try:
-        imgs = []
-        for path in paths:
-            photo_id = int(path.split('/')[-1][:-4])
-            business_id = photo_to_biz.loc[photo_id, 'business_id']
-            rawim, im = prep_for_network(resize_and_crop(misc.imread(path)))
-            if business_id not in [430, 1627, 2661, 2941]:
-                imgs.append((photo_id, business_id, rawim, im))
-    except IOError:
-        print('bad path: ' + path)
+    if train_y is not None:
+        try:
+            imgs = []
+            for path in paths:
+                photo_id = int(path.split('/')[-1][:-4])
+                business_id = photo_to_biz.loc[photo_id, 'business_id']
+                rawim, im = prep_for_network(resize_and_crop(misc.imread(path)))
+                if business_id not in [430, 1627, 2661, 2941]:
+                    imgs.append((photo_id, business_id, rawim, im))
+        except IOError:
+            print('bad path: ' + path)
 
-    imgs_only = np.concatenate([i[-1] for i in imgs], axis=0)
-    fc7_outs = list(np.array(lasagne.layers.get_output(fc7, imgs_only, deterministic=True).eval()))
+        imgs_only = np.concatenate([i[-1] for i in imgs], axis=0)
+        fc7_outs = list(np.array(lasagne.layers.get_output(fc7, imgs_only, deterministic=True).eval()))
 
-    photo_ids, business_ids = zip(*[[photo_id, business_id] for (photo_id, business_id, _, _) in imgs])
-    rows = pd.concat([pd.DataFrame(np.transpose([photo_ids, business_ids]), columns=['photo_id', 'business_id']),
-                      train_y.loc[business_ids, :].reset_index(drop=True),
-                      pd.DataFrame(fc7_outs, columns=FC7_COLS)], axis=1)
-    rows.index = photo_ids
-    processed += len(paths)
-    print(processed)
+        photo_ids, business_ids = zip(*[[photo_id, business_id] for (photo_id, business_id, _, _) in imgs])
+        rows = pd.concat([pd.DataFrame(np.transpose([photo_ids, business_ids]), columns=['photo_id', 'business_id']),
+                          train_y.loc[business_ids, :].reset_index(drop=True),
+                          pd.DataFrame(fc7_outs, columns=FC7_COLS)], axis=1)
+        rows.index = photo_ids
+        processed += len(paths)
+        print(processed)
 
-    return rows
+        return rows
+    else:
+        try:
+            imgs = []
+            for path in paths:
+                photo_id = int(path.split('/')[-1][:-4])
+                rawim, im = prep_for_network(resize_and_crop(misc.imread(path)))
+                imgs.append((photo_id, rawim, im))
+        except IOError:
+            print('bad path: ' + path)
 
+        photo_ids = [photo_id for (photo_id, _, _) in imgs]
+        imgs_only = np.concatenate([i[-1] for i in imgs], axis=0)
+        fc7_outs = list(np.array(lasagne.layers.get_output(fc7, imgs_only, deterministic=True).eval()))
+        rows = pd.concat([pd.DataFrame(np.transpose([photo_ids]), columns=['photo_id']),
+                          pd.DataFrame(fc7_outs, columns=FC7_COLS)], axis=1)
+        return rows
 
 print("Reading photo_to_biz.")
-photo_to_biz = pd.read_csv('../yelp-data/train_photo_to_biz_ids.csv', header=0, index_col='photo_id')
-print("Reading train_y.")
-train_y = prep_y(pd.read_csv('../yelp-data/train.csv', header=0, index_col='business_id'))
-train_y.columns = ['good_for_lunch', 'good_for_dinner', 'takes_reservations', 'outdoor_seating',
-                   'restaurant_is_expensive', 'has_alcohol', 'has_table_service', 'ambience_is_classy', 'good_for_kids']
-
+photo_to_biz = pd.read_csv(photo_to_biz_path, header=0, index_col='photo_id')
+if train_csv_path is not None:
+    print("Reading train_y.")
+    train_y = prep_y(pd.read_csv(train_csv_path, header=0, index_col='business_id'))
+    train_y.columns = ['good_for_lunch', 'good_for_dinner', 'takes_reservations', 'outdoor_seating',
+                       'restaurant_is_expensive', 'has_alcohol', 'has_table_service', 'ambience_is_classy', 'good_for_kids']
+else:
+    train_y = None
 
 print("Reading photos_paths.")
 photos_paths = sorted([photos_dir_path + filename for filename in os.listdir(photos_dir_path)])
@@ -188,7 +224,7 @@ for start_med in range(config['from'], last_photo, med_batch_size):
     import time
     start = time.time()
     list_result = [to_df(photo_to_biz, train_y, photos_paths[i:i+config['batch_size']])
-                   for i in range(start_med, start_med + med_batch_size, config['batch_size'])]
+                   for i in range(start_med, min(start_med + med_batch_size, len(photos_paths)), config['batch_size'])]
     end = time.time()
     print(end - start)
     print("Starting concatenation.")
